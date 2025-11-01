@@ -20,11 +20,6 @@ export function ResetPasswordForm() {
   const searchParams = useSearchParams()
   const hasCheckedRef = useRef(false)
   
-  // Get token/code from URL - Supabase can use either 'code' (PKCE) or 'token_hash'
-  const code = searchParams.get("code") || ""
-  const tokenHash = searchParams.get("token_hash") || searchParams.get("token") || ""
-  const type = searchParams.get("type") || ""
-  
   // Helper function to get hash params
   const getHashParams = () => {
     if (typeof window === 'undefined') return {}
@@ -38,6 +33,14 @@ export function ResetPasswordForm() {
     })
     return params
   }
+  
+  // Get token/code from URL - check both query params and hash fragments
+  // Supabase can send code in query params or hash fragments depending on flow
+  const hashParams = typeof window !== 'undefined' ? getHashParams() : {}
+  const code = searchParams.get("code") || hashParams.code || ""
+  const tokenHash = searchParams.get("token_hash") || searchParams.get("token") || hashParams.token_hash || hashParams.token || ""
+  const type = searchParams.get("type") || hashParams.type || ""
+  
 
   useEffect(() => {
     // Get error parameters from URL - check both query params and hash
@@ -45,9 +48,9 @@ export function ResetPasswordForm() {
     const errorCode = searchParams.get("error_code") || ""
     const errorDescription = searchParams.get("error_description") || ""
     
-    const hashParams = getHashParams()
-    const hashError = hashParams.error || ""
-    const hashErrorCode = hashParams.error_code || ""
+    const urlHashParams = getHashParams()
+    const hashError = urlHashParams.error || ""
+    const hashErrorCode = urlHashParams.error_code || ""
     
     // Determine final error state
     const hasError = errorParam || hashError
@@ -63,6 +66,18 @@ export function ResetPasswordForm() {
       const supabase = createBrowserClient()
       setIsChecking(true)
       setError("")
+      
+      // Debug: Log what we're working with
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Reset password check:', {
+          code: code ? `${code.substring(0, 10)}...` : 'none',
+          codeLength: code.length,
+          tokenHash: tokenHash ? `${tokenHash.substring(0, 10)}...` : 'none',
+          type,
+          hashParams: Object.keys(hashParams),
+          searchParams: Array.from(searchParams.entries())
+        })
+      }
       
       // FIRST: Check for error in URL parameters (from Supabase)
       if (hasError) {
@@ -120,74 +135,15 @@ export function ResetPasswordForm() {
       })
       subscription = authSubscription
 
-      // If we have a 'code' parameter, try to exchange it via API route
-      // This handles PKCE flow properly on the server side
+      // If we have a 'code' parameter, try multiple methods to verify it
+      // Supabase password reset can use different token types depending on configuration
       if (code) {
         try {
-          // Try API route first - handles PKCE properly
-          const exchangeResponse = await fetch('/api/auth/exchange-code', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ code }),
-            credentials: 'include', // Important: include cookies
-          })
-
-          if (exchangeResponse.ok) {
-            // Session should now be set via cookies from the API route
-            // Wait a bit for cookies to be set
-            await new Promise(resolve => setTimeout(resolve, 500))
-            
-            const { data: { session: apiSession } } = await supabase.auth.getSession()
-            if (apiSession) {
-              setHasSession(true)
-              setError("")
-              setIsChecking(false)
-              if (typeof window !== 'undefined') {
-                const url = new URL(window.location.href)
-                url.searchParams.delete('code')
-                url.searchParams.delete('type')
-                window.history.replaceState({}, '', url.toString())
-              }
-              if (subscription) {
-                subscription.unsubscribe()
-              }
-              return
-            }
-          }
-
-          // If API route failed, try client-side methods
-          // Method 1: Try verifyOtp (code might be token_hash)
-          try {
-            const { data: otpData, error: verifyError } = await supabase.auth.verifyOtp({
-              token_hash: code,
-              type: 'recovery'
-            })
-            
-            if (!verifyError && otpData.session) {
-              setHasSession(true)
-              setError("")
-              setIsChecking(false)
-              if (typeof window !== 'undefined') {
-                const url = new URL(window.location.href)
-                url.searchParams.delete('code')
-                url.searchParams.delete('type')
-                window.history.replaceState({}, '', url.toString())
-              }
-              if (subscription) {
-                subscription.unsubscribe()
-              }
-              return
-            }
-          } catch (otpErr) {
-            // Continue
-          }
-
-          // Method 2: Wait and check if SSR client processed it
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          const { data: { session: waitSession } } = await supabase.auth.getSession()
-          if (waitSession) {
+          // First, try to get session - Supabase SSR might have already processed hash fragments
+          // Give it a moment to process
+          await new Promise(resolve => setTimeout(resolve, 300))
+          const { data: { session: initialSession } } = await supabase.auth.getSession()
+          if (initialSession) {
             setHasSession(true)
             setError("")
             setIsChecking(false)
@@ -195,6 +151,7 @@ export function ResetPasswordForm() {
               const url = new URL(window.location.href)
               url.searchParams.delete('code')
               url.searchParams.delete('type')
+              url.hash = ''
               window.history.replaceState({}, '', url.toString())
             }
             if (subscription) {
@@ -203,8 +160,90 @@ export function ResetPasswordForm() {
             return
           }
 
+          // Method 1: Try verifyOtp with code as token_hash (recovery token flow)
+          // This is the most common method for password reset
+          let otpData, verifyError
+          try {
+            const result = await supabase.auth.verifyOtp({
+              token_hash: code,
+              type: 'recovery'
+            })
+            otpData = result.data
+            verifyError = result.error
+          } catch (e) {
+            verifyError = e as any
+          }
+          
+          if (!verifyError && otpData?.session) {
+            setHasSession(true)
+            setError("")
+            setIsChecking(false)
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href)
+              url.searchParams.delete('code')
+              url.searchParams.delete('type')
+              url.hash = ''
+              window.history.replaceState({}, '', url.toString())
+            }
+            if (subscription) {
+              subscription.unsubscribe()
+            }
+            return
+          }
+
+          // Method 2: Try exchangeCodeForSession (for PKCE flow)
+          // This might work if the same browser session that requested the reset is still active
+          let exchangeData, exchangeError
+          try {
+            const result = await supabase.auth.exchangeCodeForSession(code)
+            exchangeData = result.data
+            exchangeError = result.error
+          } catch (e) {
+            exchangeError = e as any
+          }
+          
+          if (!exchangeError && exchangeData?.session) {
+            setHasSession(true)
+            setError("")
+            setIsChecking(false)
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href)
+              url.searchParams.delete('code')
+              url.searchParams.delete('type')
+              url.hash = ''
+              window.history.replaceState({}, '', url.toString())
+            }
+            if (subscription) {
+              subscription.unsubscribe()
+            }
+            return
+          }
+
+          // All methods failed - log details for debugging
+          const errorMsg = verifyError?.message || exchangeError?.message || 'Unknown error'
+          if (process.env.NODE_ENV === 'development') {
+            console.error('Password reset verification failed:', {
+              verifyError: verifyError?.message,
+              exchangeError: exchangeError?.message,
+              codeLength: code.length,
+              codePreview: code.substring(0, 20),
+              type
+            })
+          }
+          setError("Invalid or expired reset link. Please request a new password reset.")
+          setIsChecking(false)
+          if (subscription) {
+            subscription.unsubscribe()
+          }
+          return
         } catch (err) {
           console.error('Code exchange error:', err)
+          setError("Failed to verify reset link. Please request a new password reset.")
+          setIsChecking(false)
+          if (subscription) {
+            subscription.unsubscribe()
+          }
+          return
         }
       }
 
@@ -236,8 +275,8 @@ export function ResetPasswordForm() {
       }
 
       // Check if there's a hash fragment (Supabase redirects with hash fragments)
-      const hashParams = getHashParams()
-      const hasHashFragment = Object.keys(hashParams).length > 0
+      const currentHashParams = getHashParams()
+      const hasHashFragment = Object.keys(currentHashParams).length > 0
       
       // If we have hash fragments, Supabase SSR should process them automatically
       // Give it more time to process if hash fragments are present

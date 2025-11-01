@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { RateLimitModal } from "@/components/rate-limit-modal"
 import Link from "next/link"
+import { createBrowserClient } from "@/lib/supabaseClient"
 
 export function ForgotPasswordForm() {
   const [email, setEmail] = useState("")
@@ -34,16 +35,38 @@ export function ForgotPasswordForm() {
     setIsLoading(true)
 
     try {
-      const response = await fetch("/api/auth/forgot-password", {
+      // First check rate limit via API (server-side validation)
+      const rateLimitResponse = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim() }),
       })
 
-      const data = await response.json()
-
-      if (!response.ok) {
+      if (!rateLimitResponse.ok) {
+        const data = await rateLimitResponse.json()
         throw new Error(data.error || "Failed to send reset email")
+      }
+
+      // If rate limit check passes, call Supabase directly from client
+      // This ensures PKCE code_verifier is stored in browser localStorage
+      const supabase = createBrowserClient()
+      const siteUrl = window.location.origin
+      const redirectTo = `${siteUrl}/auth/callback`
+
+      const { error: supabaseError } = await supabase.auth.resetPasswordForEmail(
+        email.trim().toLowerCase(),
+        {
+          redirectTo,
+        }
+      )
+
+      if (supabaseError) {
+        // Don't expose specific error (email enumeration protection)
+        // But log for debugging
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Password reset error:', supabaseError)
+        }
+        // Still show success message for security
       }
 
       // Reset rate limit on successful request
@@ -52,7 +75,8 @@ export function ForgotPasswordForm() {
     } catch (err: any) {
       // Record failed attempt
       recordAttempt(true)
-      setError(err?.message || "Failed to send reset email. Please try again.")
+      // Show generic error to prevent email enumeration
+      setError("Failed to send reset email. Please try again.")
     } finally {
       setIsLoading(false)
     }

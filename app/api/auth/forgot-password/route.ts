@@ -55,43 +55,12 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.trim().toLowerCase()
 
-    // Security: Use Supabase password reset
-    // This will send a password reset email to the user
-    // The redirectTo URL should match your site URL configuration in Supabase
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_VERCEL_URL 
-      ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}` 
-      : 'http://localhost:3000'
-    
-    // Redirect directly to reset-password - the client will handle the code
-    const redirectTo = `${siteUrl}/reset-password`
-
-    // Use resetPasswordForEmail - Supabase will send email with code
-    // Note: If PKCE is enabled in Supabase, we'll handle it client-side
-    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-      redirectTo,
-      // Disable PKCE flow for password reset if possible (depends on Supabase version)
-      // Some versions support this option
-    })
-
-    if (error) {
-      // Log error in development for debugging
-      if (process.env.NODE_ENV === 'development') {
-        console.error("Password reset error:", error.message)
-        console.error("Full error:", error)
-      }
-      
-      // Security: Generic error message to prevent email enumeration
-      // But we should still log for debugging
-      // Supabase will silently fail if email doesn't exist, which is the correct behavior
-      
-      // Return success even on error to prevent email enumeration
-      // In production, Supabase handles this correctly
-      return NextResponse.json({
-        message: "If an account exists with that email, a password reset link has been sent."
-      })
-    }
+    // Only validate and rate limit here
+    // The actual resetPasswordForEmail is called client-side to support PKCE properly
+    // This ensures code_verifier is stored in browser localStorage for PKCE flow
 
     // Security: Always return success to prevent email enumeration
+    // The client will handle the actual Supabase call
     return NextResponse.json({
       message: "If an account exists with that email, a password reset link has been sent."
     })
