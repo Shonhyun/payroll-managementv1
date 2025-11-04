@@ -11,9 +11,37 @@ import { Input } from "@/components/ui/input"
 import { RateLimitModal } from "@/components/rate-limit-modal"
 import Link from "next/link"
 
+const REMEMBER_ME_KEY = "payroll_remember_email"
+const REMEMBER_ME_CHECKED_KEY = "payroll_remember_me_checked"
+
+// Helper function to safely get initial email from localStorage
+function getInitialEmail(): string {
+  if (typeof window === "undefined") return ""
+  try {
+    const savedEmail = localStorage.getItem(REMEMBER_ME_KEY)
+    const wasRememberMeChecked = localStorage.getItem(REMEMBER_ME_CHECKED_KEY) === "true"
+    return wasRememberMeChecked && savedEmail ? savedEmail : ""
+  } catch (e) {
+    return ""
+  }
+}
+
+// Helper function to safely get initial remember me state from localStorage
+function getInitialRememberMe(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    const savedEmail = localStorage.getItem(REMEMBER_ME_KEY)
+    const wasRememberMeChecked = localStorage.getItem(REMEMBER_ME_CHECKED_KEY) === "true"
+    return !!(wasRememberMeChecked && savedEmail)
+  } catch (e) {
+    return false
+  }
+}
+
 export function LoginForm() {
-  const [email, setEmail] = useState("")
+  const [email, setEmail] = useState(() => getInitialEmail())
   const [password, setPassword] = useState("")
+  const [rememberMe, setRememberMe] = useState(() => getInitialRememberMe())
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
@@ -37,6 +65,28 @@ export function LoginForm() {
 
     try {
       await login(email, password)
+      
+      // Handle remember me functionality
+      if (rememberMe) {
+        // Save email and remember me preference
+        try {
+          localStorage.setItem(REMEMBER_ME_KEY, email)
+          localStorage.setItem(REMEMBER_ME_CHECKED_KEY, "true")
+        } catch (e) {
+          // Handle localStorage errors gracefully
+          console.error("Failed to save remembered email:", e)
+        }
+      } else {
+        // Clear saved email and preference if remember me is unchecked
+        try {
+          localStorage.removeItem(REMEMBER_ME_KEY)
+          localStorage.removeItem(REMEMBER_ME_CHECKED_KEY)
+        } catch (e) {
+          // Handle localStorage errors gracefully
+          console.error("Failed to clear remembered email:", e)
+        }
+      }
+      
       // Reset rate limit on successful login
       reset()
       router.push("/dashboard")
@@ -79,7 +129,7 @@ export function LoginForm() {
             <Input
               id="email"
               type="email"
-              placeholder="your@email.com"
+              placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -94,7 +144,7 @@ export function LoginForm() {
             <Input
               id="password"
               type="password"
-              placeholder="••••••••"
+              placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -113,6 +163,8 @@ export function LoginForm() {
               <input
                 type="checkbox"
                 className="rounded border-border"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
                 disabled={isFormDisabled}
               />
               <span className="text-muted-foreground">Remember me</span>

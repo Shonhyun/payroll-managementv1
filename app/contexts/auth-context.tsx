@@ -9,6 +9,7 @@ interface User {
   id: string
   email: string
   name?: string
+  passwordChangedAt?: string
 }
 
 interface AuthContextType {
@@ -17,6 +18,9 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   signup: (email: string, password: string, name: string) => Promise<void>
+  updateEmail: (newEmail: string) => Promise<void>
+  updatePassword: (newPassword: string, currentPassword: string) => Promise<void>
+  updateName: (newName: string) => Promise<void>
   isAuthenticated: boolean
 }
 
@@ -35,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       id: supabaseUser.id,
       email: supabaseUser.email || "",
       name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || undefined,
+      passwordChangedAt: supabaseUser.user_metadata?.password_changed_at || undefined,
     }
   }
 
@@ -144,18 +149,170 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     setIsLoading(true)
     try {
-      const { error } = await supabase.auth.signOut()
-      if (error) {
-        throw error
+      // Check if there's a session first
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (session) {
+        const { error } = await supabase.auth.signOut()
+        if (error) {
+          // If signOut fails but we have a session, still clear local state
+          if (process.env.NODE_ENV === 'development') {
+            console.error("SignOut error:", error)
+          }
+        }
       }
+      
+      // Always clear user state, even if signOut fails
       setUser(null)
     } catch (error: any) {
       // Security: Don't log sensitive errors in production
       if (process.env.NODE_ENV === 'development') {
         console.error("Logout error:", error)
       }
-      // Still throw for error handling, but don't expose details
-      throw new Error("Logout failed")
+      // Always clear user state on logout attempt
+      setUser(null)
+      // Don't throw - logout should always succeed from user's perspective
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const updateEmail = async (newEmail: string) => {
+    setIsLoading(true)
+    try {
+      // Check if there's an active session
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        throw new Error("No active session found. Please log in again.")
+      }
+
+      // Set redirect URL for email confirmation
+      // This tells Supabase where to redirect after user confirms email change
+      const redirectUrl = typeof window !== 'undefined' 
+        ? `${window.location.origin}/auth/callback?type=email_change&next=/dashboard/settings`
+        : undefined
+
+      // Update email - Supabase will send a confirmation email to the new address
+      const { data, error } = await supabase.auth.updateUser(
+        {
+          email: newEmail,
+        },
+        {
+          emailRedirectTo: redirectUrl,
+        }
+      )
+
+      if (error) {
+        throw error
+      }
+
+      // Update user state
+      if (data.user) {
+        // Note: Email won't be updated in user object until confirmed
+        // The user needs to confirm the new email via the link sent to them
+        setUser(mapSupabaseUser(data.user))
+      }
+    } catch (error: any) {
+      // Re-throw with user-friendly message
+      const errorMessage = error.message || "Failed to update email"
+      throw new Error(errorMessage)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const updatePassword = async (newPassword: string, currentPassword: string) => {
+    setIsLoading(true)
+    try {
+      // First verify current password
+      const { data: { user: currentUser } } = await supabase.auth.getUser()
+      if (!currentUser?.email) {
+        throw new Error("No active session found. Please log in again.")
+      }
+
+      // Verify current password by attempting to sign in
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: currentUser.email,
+        password: currentPassword,
+      })
+
+      if (verifyError) {
+        throw new Error("Current password is incorrect")
+      }
+
+      // If password is correct, update password
+      const passwordChangedAt = new Date().toISOString()
+      
+      // Update password and metadata in one call
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword,
+        data: {
+          password_changed_at: passwordChangedAt,
+        },
+      })
+
+      if (error) {
+        throw error
+      }
+
+      // Refresh user data to get updated metadata
+      if (data.user) {
+        setUser(mapSupabaseUser(data.user))
+      }
+    } catch (error: any) {
+      // Re-throw with user-friendly message
+      throw new Error(error.message || "Failed to update password")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const updateName = async (newName: string) => {
+    setIsLoading(true)
+    try {
+      // Check if there's an active session
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        throw new Error("No active session found. Please log in again.")
+      }
+
+      // Sanitize name input
+      const sanitizedName = newName.trim()
+
+      // Validate name
+      if (!sanitizedName) {
+        throw new Error("Name cannot be empty")
+      }
+
+      if (sanitizedName.length < 2) {
+        throw new Error("Name must be at least 2 characters")
+      }
+
+      if (sanitizedName.length > 100) {
+        throw new Error("Name must be less than 100 characters")
+      }
+
+      // Update name in user metadata
+      const { data, error } = await supabase.auth.updateUser({
+        data: {
+          full_name: sanitizedName,
+          name: sanitizedName,
+        },
+      })
+
+      if (error) {
+        throw error
+      }
+
+      // Update user state
+      if (data.user) {
+        setUser(mapSupabaseUser(data.user))
+      }
+    } catch (error: any) {
+      // Re-throw with user-friendly message
+      throw new Error(error.message || "Failed to update name")
     } finally {
       setIsLoading(false)
     }
@@ -169,6 +326,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         signup,
+        updateEmail,
+        updatePassword,
+        updateName,
         isAuthenticated: !!user,
       }}
     >
