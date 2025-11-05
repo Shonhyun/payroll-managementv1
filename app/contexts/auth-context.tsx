@@ -97,14 +97,112 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error
       }
 
-      if (data.user) {
+      if (data.user && data.session) {
         setUser(mapSupabaseUser(data.user))
+        
+        // Record login history
+        try {
+          await recordLoginHistory(data.user.id, data.session.access_token)
+        } catch (historyError) {
+          // Don't fail login if history recording fails
+          console.error("Failed to record login history:", historyError)
+        }
       }
     } catch (error: any) {
       // Re-throw with user-friendly message
       throw new Error(error.message || "Login failed")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Record login history
+  const recordLoginHistory = async (userId: string, sessionToken: string) => {
+    try {
+      // Get user's IP and location
+      let ipAddress = "unknown"
+      let location = "Unknown"
+      
+      try {
+        const ipResponse = await fetch("https://api.ipify.org?format=json")
+        const ipData = await ipResponse.json()
+        ipAddress = ipData.ip || "unknown"
+
+        // Get location from IP (using a free geolocation API)
+        try {
+          const locationResponse = await fetch(`https://ipapi.co/${ipAddress}/json/`)
+          const locationData = await locationResponse.json()
+          if (locationData.city && locationData.country_name) {
+            location = `${locationData.city}, ${locationData.country_name}`
+          } else if (locationData.country_name) {
+            location = locationData.country_name
+          }
+        } catch (locError) {
+          // Fallback to default location
+          console.error("Failed to get location:", locError)
+        }
+      } catch (ipError) {
+        console.error("Failed to get IP:", ipError)
+      }
+
+      // Get user agent
+      const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : "unknown"
+      
+      // Get session ID from token (use first 20 chars as session identifier)
+      const sessionId = sessionToken.substring(0, 20) + Date.now().toString()
+
+      // Get device info from user agent
+      const getDeviceType = (ua: string): string => {
+        if (!ua) return "desktop"
+        const uaLower = ua.toLowerCase()
+        if (uaLower.includes("mobile") || uaLower.includes("android") || uaLower.includes("iphone")) {
+          return "mobile"
+        }
+        if (uaLower.includes("tablet") || uaLower.includes("ipad")) {
+          return "tablet"
+        }
+        return "desktop"
+      }
+
+      const getDeviceName = (ua: string): string => {
+        if (!ua) return "Unknown Device"
+        const uaLower = ua.toLowerCase()
+        if (uaLower.includes("iphone")) return "iPhone"
+        if (uaLower.includes("ipad")) return "iPad"
+        if (uaLower.includes("android") && uaLower.includes("mobile")) return "Android Phone"
+        if (uaLower.includes("android")) return "Android Tablet"
+        if (uaLower.includes("windows")) return "Windows Desktop"
+        if (uaLower.includes("mac") || uaLower.includes("macintosh")) return "Mac Desktop"
+        if (uaLower.includes("linux")) return "Linux Desktop"
+        return "Unknown Device"
+      }
+
+      const deviceType = getDeviceType(userAgent)
+      const deviceName = getDeviceName(userAgent)
+
+      // Insert directly using Supabase client (has authenticated session)
+      const { error: insertError } = await supabase
+        .from("login_history")
+        .insert({
+          user_id: userId,
+          session_id: sessionId,
+          ip_address: ipAddress,
+          user_agent: userAgent,
+          device_type: deviceType,
+          device_name: deviceName,
+          location: location,
+          status: "success",
+          login_at: new Date().toISOString(),
+        })
+
+      if (insertError) {
+        console.error("Error inserting login history:", insertError)
+        // Don't throw - just log the error
+        // This is a non-critical operation
+      }
+    } catch (error) {
+      // Silently fail - don't block login
+      console.error("Error recording login history:", error)
     }
   }
 

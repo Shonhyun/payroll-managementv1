@@ -9,6 +9,7 @@ import { useRateLimit } from "@/app/hooks/use-rate-limit"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { RateLimitModal } from "@/components/rate-limit-modal"
+import { Spinner } from "@/components/ui/spinner"
 import Link from "next/link"
 
 const REMEMBER_ME_KEY = "payroll_remember_email"
@@ -114,6 +115,16 @@ export function LoginForm() {
 
   return (
     <>
+      {/* Full-screen loading overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner className="size-12 text-primary" />
+            <p className="text-lg font-semibold text-foreground">Signing in...</p>
+            <p className="text-sm text-muted-foreground">Please wait</p>
+          </div>
+        </div>
+      )}
       <RateLimitModal
         isOpen={isBlocked}
         remainingSeconds={remainingSeconds}
@@ -175,7 +186,14 @@ export function LoginForm() {
           </div>
 
           <Button type="submit" disabled={isFormDisabled} className="w-full">
-            {isLoading ? "Signing in..." : "Sign in"}
+            {isLoading ? (
+              <>
+                <Spinner className="mr-2" />
+                Signing in...
+              </>
+            ) : (
+              "Sign in"
+            )}
           </Button>
 
           <div className="text-center text-sm">

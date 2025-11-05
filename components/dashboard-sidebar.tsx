@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/app/hooks/use-auth"
 import Link from "next/link"
@@ -8,18 +8,23 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Button } from "@/components/ui/button"
 import { Menu } from "lucide-react"
 import { useIsMobile } from "@/components/ui/use-mobile"
+import { Spinner } from "@/components/ui/spinner"
 
 const SidebarContent = ({ onLinkClick }: { onLinkClick?: () => void }) => {
   const router = useRouter()
   const { user, logout } = useAuth()
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   const handleLogout = async () => {
+    setIsLoggingOut(true)
     try {
       await logout()
       router.push("/login")
       onLinkClick?.()
     } catch (error) {
       console.error("Logout failed:", error)
+    } finally {
+      setIsLoggingOut(false)
     }
   }
 
@@ -38,6 +43,16 @@ const SidebarContent = ({ onLinkClick }: { onLinkClick?: () => void }) => {
 
   return (
     <>
+      {/* Full-screen loading overlay */}
+      {isLoggingOut && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner className="size-12 text-primary" />
+            <p className="text-lg font-semibold text-foreground">Logging out...</p>
+            <p className="text-sm text-muted-foreground">Please wait</p>
+          </div>
+        </div>
+      )}
       <div className="p-4 sm:p-6 border-b border-sidebar-border">
         <h2 className="text-lg sm:text-xl font-bold text-sidebar-foreground">Payroll Manager</h2>
       </div>
@@ -82,9 +97,17 @@ const SidebarContent = ({ onLinkClick }: { onLinkClick?: () => void }) => {
         </div>
         <button
           onClick={handleLogout}
-          className="w-full px-4 py-2 rounded-lg bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/80 transition-colors font-medium text-sm"
+          disabled={isLoggingOut}
+          className="w-full px-4 py-2 rounded-lg bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/80 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          Logout
+          {isLoggingOut ? (
+            <>
+              <Spinner className="size-4" />
+              Logging out...
+            </>
+          ) : (
+            "Logout"
+          )}
         </button>
       </div>
     </>

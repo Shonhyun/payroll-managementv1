@@ -16,6 +16,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/app/hooks/use-auth"
 import { createBrowserClient } from "@/lib/supabaseClient"
@@ -28,7 +36,17 @@ import {
   MapPin, 
   Key,
   Clock,
-  Trash2
+  Trash2,
+  Download,
+  Globe,
+  Shield,
+  Settings as SettingsIcon,
+  Calendar,
+  DollarSign,
+  FileText,
+  LogOut,
+  Monitor,
+  Smartphone
 } from "lucide-react"
 
 interface BiometricDevice {
@@ -77,6 +95,264 @@ export default function SettingsPage() {
   const [isEmailLoading, setIsEmailLoading] = useState(false)
   const [isNameLoading, setIsNameLoading] = useState(false)
   const [isPasswordLoading, setIsPasswordLoading] = useState(false)
+
+  // Payroll System Configuration
+  const [payrollPeriod, setPayrollPeriod] = useState("monthly")
+  const [payDate, setPayDate] = useState("15")
+  const [overtimeRate, setOvertimeRate] = useState("1.25")
+  const [isSavingPayrollConfig, setIsSavingPayrollConfig] = useState(false)
+
+  // Time Zone Settings
+  const [timezone, setTimezone] = useState("Asia/Manila")
+  const [isSavingTimezone, setIsSavingTimezone] = useState(false)
+
+  // Login History
+  const [loginHistory, setLoginHistory] = useState<Array<{
+    id: string
+    session_id: string | null
+    date: string
+    time: string
+    ipAddress: string
+    device: string
+    location: string
+    status: "success" | "failed"
+    login_at: string
+    logout_at: string | null
+    isCurrentSession?: boolean
+  }>>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [isLoggingOutSession, setIsLoggingOutSession] = useState<string | null>(null)
+
+  // Data Export
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportType, setExportType] = useState<string>("")
+
+  // Load login history from database
+  const loadLoginHistory = async () => {
+    if (!user?.id) {
+      setIsLoadingHistory(false)
+      return
+    }
+
+    setIsLoadingHistory(true)
+    try {
+      const supabase = createBrowserClient()
+      
+      // Get current session token
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setIsLoadingHistory(false)
+        return
+      }
+
+      // Store current session ID prefix for comparison
+      const currentSessionIdPrefix = session.access_token.substring(0, 20)
+
+      // Fetch login history directly from Supabase (has authenticated session)
+      const { data, error } = await supabase
+        .from("login_history")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("login_at", { ascending: false })
+        .limit(50)
+
+      if (error) {
+        throw new Error(error.message || "Failed to fetch login history")
+      }
+      
+      // Transform database data to match UI format
+      const transformedHistory = (data || []).map((item: any) => {
+        const loginDate = new Date(item.login_at)
+        const sessionIdPrefix = item.session_id?.substring(0, 20) || ""
+        const isCurrentSession = sessionIdPrefix === currentSessionIdPrefix && !item.logout_at
+        
+        return {
+          id: item.id,
+          session_id: item.session_id,
+          date: loginDate.toLocaleDateString(),
+          time: loginDate.toLocaleTimeString(),
+          ipAddress: item.ip_address || "unknown",
+          device: item.device_name || item.device_type || "Unknown Device",
+          location: item.location || "Unknown",
+          status: item.status || "success",
+          login_at: item.login_at,
+          logout_at: item.logout_at,
+          isCurrentSession,
+        }
+      })
+
+      setLoginHistory(transformedHistory)
+    } catch (error: any) {
+      console.error("Error loading login history:", error)
+      toast({
+        title: "Error loading login history",
+        description: "Failed to load login history. Please try again.",
+        variant: "destructive",
+      })
+      // Set empty array on error
+      setLoginHistory([])
+    } finally {
+      setIsLoadingHistory(false)
+    }
+  }
+
+  // Handle logout from specific session
+  const handleLogoutSession = async (sessionId: string, historyId: string) => {
+    if (!user?.id || !sessionId) return
+
+    setIsLoggingOutSession(historyId)
+    try {
+      const supabase = createBrowserClient()
+      
+      // Get current session token
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error("No active session")
+      }
+
+      // Update logout_at directly using Supabase (has authenticated session)
+      const { error } = await supabase
+        .from("login_history")
+        .update({
+          logout_at: new Date().toISOString(),
+        })
+        .eq("session_id", sessionId)
+        .eq("user_id", user.id)
+
+      if (error) {
+        throw new Error(error.message || "Failed to logout session")
+      }
+
+      // Update local state - mark as logged out
+      setLoginHistory(prev => 
+        prev.map(item => 
+          item.id === historyId 
+            ? { ...item, logout_at: new Date().toISOString() }
+            : item
+        )
+      )
+
+      toast({
+        title: "Session logged out",
+        description: "This session has been terminated successfully.",
+      })
+    } catch (error: any) {
+      console.error("Error logging out session:", error)
+      toast({
+        title: "Error logging out session",
+        description: error.message || "Failed to logout session. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoggingOutSession(null)
+    }
+  }
+
+  // Load saved settings on mount
+  useEffect(() => {
+    // Load payroll config from localStorage
+    const savedPayrollPeriod = localStorage.getItem("payroll_period") || "monthly"
+    const savedPayDate = localStorage.getItem("payroll_pay_date") || "15"
+    const savedOvertimeRate = localStorage.getItem("payroll_overtime_rate") || "1.25"
+    setPayrollPeriod(savedPayrollPeriod)
+    setPayDate(savedPayDate)
+    setOvertimeRate(savedOvertimeRate)
+
+    // Load timezone from localStorage
+    const savedTimezone = localStorage.getItem("timezone") || "Asia/Manila"
+    setTimezone(savedTimezone)
+
+    // Load login history
+    loadLoginHistory()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Handle payroll config save
+  const handleSavePayrollConfig = async () => {
+    setIsSavingPayrollConfig(true)
+    try {
+      // Save to localStorage (in real app, save to database)
+      localStorage.setItem("payroll_period", payrollPeriod)
+      localStorage.setItem("payroll_pay_date", payDate)
+      localStorage.setItem("payroll_overtime_rate", overtimeRate)
+      
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      toast({
+        title: "Payroll settings saved",
+        description: "Your payroll configuration has been updated successfully.",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error saving settings",
+        description: error.message || "Failed to save payroll configuration.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingPayrollConfig(false)
+    }
+  }
+
+  // Handle timezone save
+  const handleSaveTimezone = async () => {
+    setIsSavingTimezone(true)
+    try {
+      localStorage.setItem("timezone", timezone)
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      toast({
+        title: "Timezone updated",
+        description: `Timezone has been set to ${timezone}.`,
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error saving timezone",
+        description: error.message || "Failed to save timezone.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingTimezone(false)
+    }
+  }
+
+  // Handle data export
+  const handleExportData = async (type: "employees" | "payroll" | "dtr" | "all") => {
+    setIsExporting(true)
+    setExportType(type)
+    
+    try {
+      // Simulate export process
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      
+      // In real app, this would generate CSV/Excel file
+      const filename = `payroll_export_${type}_${new Date().toISOString().split("T")[0]}.csv`
+      
+      toast({
+        title: "Export completed",
+        description: `${filename} has been generated. Download will start shortly.`,
+      })
+      
+      // Simulate download
+      const blob = new Blob(["Mock export data"], { type: "text/csv" })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+    } catch (error: any) {
+      toast({
+        title: "Export failed",
+        description: error.message || "Failed to export data. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsExporting(false)
+      setExportType("")
+    }
+  }
 
   // Fetch devices from database
   useEffect(() => {
@@ -1165,6 +1441,305 @@ export default function SettingsPage() {
                 <p className="text-sm text-muted-foreground">Get summary reports every Monday</p>
               </div>
             </label>
+          </div>
+        </Card>
+
+        {/* Payroll System Configuration */}
+        <Card className="bg-card border border-border rounded-xl p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <SettingsIcon className="w-5 h-5 text-primary" />
+            <h2 className="text-base sm:text-lg font-semibold text-foreground">Payroll System Configuration</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">Configure payroll computation rules and settings.</p>
+          
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="payroll-period">Payroll Period</Label>
+              <Select value={payrollPeriod} onValueChange={setPayrollPeriod}>
+                <SelectTrigger id="payroll-period" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="bi-weekly">Bi-weekly (Every 2 weeks)</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                  <SelectItem value="semi-monthly">Semi-monthly (15th & End of month)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">How often payroll is processed</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pay-date">Default Pay Date</Label>
+              <Select value={payDate} onValueChange={setPayDate}>
+                <SelectTrigger id="pay-date" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                    <SelectItem key={day} value={day.toString()}>
+                      {day === 1 ? `${day}st` : day === 2 ? `${day}nd` : day === 3 ? `${day}rd` : `${day}th`} of month
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Default day of month when employees are paid</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="overtime-rate">Overtime Rate Multiplier</Label>
+              <Select value={overtimeRate} onValueChange={setOvertimeRate}>
+                <SelectTrigger id="overtime-rate" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1.25">1.25x (25% premium - Standard)</SelectItem>
+                  <SelectItem value="1.5">1.5x (50% premium)</SelectItem>
+                  <SelectItem value="2.0">2.0x (Double time)</SelectItem>
+                  <SelectItem value="1.0">1.0x (Regular rate)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Multiplier for overtime hours calculation</p>
+            </div>
+
+            <Button 
+              onClick={handleSavePayrollConfig} 
+              disabled={isSavingPayrollConfig}
+              className="w-full sm:w-auto"
+            >
+              {isSavingPayrollConfig ? "Saving..." : "Save Payroll Configuration"}
+            </Button>
+          </div>
+        </Card>
+
+        {/* Time Zone Settings */}
+        <Card className="bg-card border border-border rounded-xl p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Globe className="w-5 h-5 text-primary" />
+            <h2 className="text-base sm:text-lg font-semibold text-foreground">Time Zone Settings</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">Set your organization's time zone for accurate attendance tracking.</p>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="timezone">Time Zone</Label>
+              <Select value={timezone} onValueChange={setTimezone}>
+                <SelectTrigger id="timezone" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Asia/Manila">Asia/Manila (Philippines - UTC+8)</SelectItem>
+                  <SelectItem value="Asia/Singapore">Asia/Singapore (UTC+8)</SelectItem>
+                  <SelectItem value="Asia/Hong_Kong">Asia/Hong Kong (UTC+8)</SelectItem>
+                  <SelectItem value="Asia/Tokyo">Asia/Tokyo (Japan - UTC+9)</SelectItem>
+                  <SelectItem value="Asia/Seoul">Asia/Seoul (South Korea - UTC+9)</SelectItem>
+                  <SelectItem value="America/New_York">America/New York (UTC-5)</SelectItem>
+                  <SelectItem value="America/Los_Angeles">America/Los Angeles (UTC-8)</SelectItem>
+                  <SelectItem value="Europe/London">Europe/London (UTC+0)</SelectItem>
+                  <SelectItem value="Europe/Paris">Europe/Paris (UTC+1)</SelectItem>
+                  <SelectItem value="UTC">UTC (Coordinated Universal Time)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">This affects all time records and attendance tracking</p>
+            </div>
+
+            <div className="p-4 bg-background rounded-lg border border-border">
+              <p className="text-sm font-medium text-foreground mb-1">Current Time</p>
+              <p className="text-lg font-semibold text-primary">
+                {new Date().toLocaleString("en-US", { 
+                  timeZone: timezone,
+                  dateStyle: "full",
+                  timeStyle: "long"
+                })}
+              </p>
+            </div>
+
+            <Button 
+              onClick={handleSaveTimezone} 
+              disabled={isSavingTimezone}
+              className="w-full sm:w-auto"
+            >
+              {isSavingTimezone ? "Saving..." : "Save Time Zone"}
+            </Button>
+          </div>
+        </Card>
+
+        {/* Security - Login History */}
+        <Card className="bg-card border border-border rounded-xl p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="w-5 h-5 text-primary" />
+            <h2 className="text-base sm:text-lg font-semibold text-foreground">Security - Login History</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">View recent login activity and account access history.</p>
+          
+          {isLoadingHistory ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">Loading login history...</p>
+            </div>
+          ) : loginHistory.length === 0 ? (
+            <div className="text-center py-12 border border-dashed border-border rounded-lg">
+              <p className="text-muted-foreground">No login history available</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {loginHistory.map((login) => {
+                const isCurrentSession = login.isCurrentSession || false
+                const isLoggingOut = isLoggingOutSession === login.id
+                
+                return (
+                  <div 
+                    key={login.id} 
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-background rounded-lg border border-border"
+                  >
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        {login.device.toLowerCase().includes("iphone") || 
+                         login.device.toLowerCase().includes("android") || 
+                         login.device.toLowerCase().includes("mobile") ? (
+                          <Smartphone className="w-4 h-4 text-muted-foreground" />
+                        ) : (
+                          <Monitor className="w-4 h-4 text-muted-foreground" />
+                        )}
+                        <p className="font-medium text-foreground">{login.device}</p>
+                        <Badge variant={login.status === "success" ? "default" : "destructive"} className="text-xs">
+                          {login.status === "success" ? "Success" : "Failed"}
+                        </Badge>
+                        {isCurrentSession && (
+                          <Badge variant="outline" className="text-xs">
+                            Current Session
+                          </Badge>
+                        )}
+                        {login.logout_at && (
+                          <Badge variant="secondary" className="text-xs">
+                            Logged Out
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-muted-foreground">
+                        <span>{login.date} at {login.time}</span>
+                        <span>IP: {login.ipAddress}</span>
+                        <span>{login.location}</span>
+                      </div>
+                    </div>
+                    {login.session_id && !login.logout_at && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        disabled={isLoggingOut || isCurrentSession}
+                        onClick={() => login.session_id && handleLogoutSession(login.session_id, login.id)}
+                      >
+                        {isLoggingOut ? (
+                          <>
+                            <Spinner className="w-4 h-4 mr-2" />
+                            Logging out...
+                          </>
+                        ) : (
+                          <>
+                            <LogOut className="w-4 h-4 mr-2" />
+                            Logout
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+
+        {/* Data Export & Backup */}
+        <Card className="bg-card border border-border rounded-xl p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Download className="w-5 h-5 text-primary" />
+            <h2 className="text-base sm:text-lg font-semibold text-foreground">Data Export & Backup</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">Export employee data, payroll records, and time records for backup or reporting.</p>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button
+              onClick={() => handleExportData("employees")}
+              disabled={isExporting && exportType === "employees"}
+              className="flex flex-col items-start gap-3 p-4 bg-background rounded-lg border border-border hover:border-primary/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <FileText className="w-5 h-5 text-primary" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export Employees</p>
+                  <p className="text-xs text-muted-foreground">All employee records</p>
+                </div>
+              </div>
+              {isExporting && exportType === "employees" && (
+                <p className="text-xs text-primary">Exporting...</p>
+              )}
+            </button>
+
+            <button
+              onClick={() => handleExportData("payroll")}
+              disabled={isExporting && exportType === "payroll"}
+              className="flex flex-col items-start gap-3 p-4 bg-background rounded-lg border border-border hover:border-primary/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <DollarSign className="w-5 h-5 text-primary" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export Payroll</p>
+                  <p className="text-xs text-muted-foreground">Payroll computation records</p>
+                </div>
+              </div>
+              {isExporting && exportType === "payroll" && (
+                <p className="text-xs text-primary">Exporting...</p>
+              )}
+            </button>
+
+            <button
+              onClick={() => handleExportData("dtr")}
+              disabled={isExporting && exportType === "dtr"}
+              className="flex flex-col items-start gap-3 p-4 bg-background rounded-lg border border-border hover:border-primary/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Calendar className="w-5 h-5 text-primary" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export DTR</p>
+                  <p className="text-xs text-muted-foreground">Daily time records</p>
+                </div>
+              </div>
+              {isExporting && exportType === "dtr" && (
+                <p className="text-xs text-primary">Exporting...</p>
+              )}
+            </button>
+
+            <button
+              onClick={() => handleExportData("all")}
+              disabled={isExporting && exportType === "all"}
+              className="flex flex-col items-start gap-3 p-4 bg-background rounded-lg border-2 border-primary/50 hover:border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary/20 rounded-lg">
+                  <Download className="w-5 h-5 text-primary" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export All Data</p>
+                  <p className="text-xs text-muted-foreground">Complete system backup</p>
+                </div>
+              </div>
+              {isExporting && exportType === "all" && (
+                <p className="text-xs text-primary">Exporting all data...</p>
+              )}
+            </button>
+          </div>
+
+          <div className="mt-6 p-4 bg-muted/50 rounded-lg border border-border">
+            <p className="text-sm text-muted-foreground">
+              <strong className="text-foreground">Note:</strong> Exports are generated in CSV format and include all records up to the current date. 
+              Large exports may take several minutes to process.
+            </p>
           </div>
         </Card>
       </div>

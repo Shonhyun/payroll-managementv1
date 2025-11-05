@@ -1,9 +1,11 @@
 "use client"
 
+import { useState } from "react"
 import { useAuth } from "@/hooks/use-auth"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
+import { Spinner } from "@/components/ui/spinner"
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
@@ -17,14 +19,33 @@ export function Sidebar() {
   const { user, logout } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
-  const handleLogout = () => {
-    logout()
-    router.push("/login")
+  const handleLogout = async () => {
+    setIsLoggingOut(true)
+    try {
+      await logout()
+      router.push("/login")
+    } catch (error) {
+      console.error("Logout failed:", error)
+    } finally {
+      setIsLoggingOut(false)
+    }
   }
 
   return (
-    <aside className="w-64 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 flex flex-col">
+    <>
+      {/* Full-screen loading overlay */}
+      {isLoggingOut && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner className="size-12 text-primary" />
+            <p className="text-lg font-semibold text-foreground">Signing out...</p>
+            <p className="text-sm text-muted-foreground">Please wait</p>
+          </div>
+        </div>
+      )}
+      <aside className="w-64 bg-sidebar border-r border-sidebar-border h-screen sticky top-0 flex flex-col">
       <div className="p-6 border-b border-sidebar-border">
         <div className="flex items-center gap-3">
           <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-sidebar-primary/20">
@@ -63,11 +84,20 @@ export function Sidebar() {
         </div>
         <button
           onClick={handleLogout}
-          className="w-full px-4 py-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 text-sm font-medium transition-colors"
+          disabled={isLoggingOut}
+          className="w-full px-4 py-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          Sign Out
+          {isLoggingOut ? (
+            <>
+              <Spinner className="size-4" />
+              Signing out...
+            </>
+          ) : (
+            "Sign Out"
+          )}
         </button>
       </div>
     </aside>
+    </>
   )
 }
